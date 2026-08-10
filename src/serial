@@ -1,0 +1,297 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+// Initialize both PCA9685 boards
+Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40); // Card 1: No pads soldered
+Adafruit_PWMServoDriver pwm2 = Adafruit_PWMServoDriver(0x60); // Card 2: A5 pad soldered
+
+// Servo Calibration Constants (Adjust these if your servos strain at the limits)
+#define SERVOMIN   150 
+#define SERVOMAX   600 
+#define SERVO_FREQ 50 
+#define LEG_DETECT_THRESHOLD_MV 2000
+#define HOME_HIP 90
+#define HOME_FEMUR 153
+#define HOME_TIBIA 160
+#define LIFT_FEMUR 160
+#define LIFT_TIBIA 130
+#define MOVE_SPEED_DELAY 15
+
+// Removable leg detect pins for the 30-pin ESP32.
+// A leg is available when its detect pin is at or above LEG_DETECT_THRESHOLD_MV.
+const int legDetectPins[7] = {
+  -1, // Unused (Index 0)
+  34, // Leg 1
+  35, // Leg 2
+  32, // Leg 3
+  33, // Leg 4
+  25, // Leg 5
+  26  // Leg 6
+};
+
+bool legAvailable[7] = {
+  false, false, false, false, false, false, false
+};
+
+// Global array to keep track of the CURRENT angle of every single joint
+// Array dimensions: [leg 1-6][joint 1-3] -> initialized to home positions
+int currentAngles[7][4] = {
+  {0, 0, 0, 0},         // Unused (Index 0)
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}, // Leg 1 [Hip, Femur, Tibia]
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}, // Leg 2
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}, // Leg 3
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}, // Leg 4
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}, // Leg 5
+  {0, HOME_HIP, HOME_FEMUR, HOME_TIBIA}  // Leg 6
+};
+
+// --- Function Prototypes ---
+int angleToPulse(int angle);
+void setLegJoint(int leg, int joint, int angle);
+void slowMove(int leg, int joint, int targetAngle, int speedDelay);
+void setupLegDetectPins();
+void updateLegAvailability();
+void printLegAvailability();
+void printSingleLegAvailability(int leg);
+bool isLegAvailable(int leg);
+void liftLeg(int leg);
+void homeRobot();
+void printSerialHelp();
+void handleSerialCommands();
+
+void setup() {
+  Serial.begin(115200);
+  Serial.setTimeout(100);
+  while(!Serial) { delay(10); } 
+
+  setupLegDetectPins();
+  
+  // Explicitly assign I2C pins for the 38-pin ESP32
+  // GPIO 21 = SDA, GPIO 22 = SCL
+  Wire.begin(21, 22); 
+
+  Serial.println("Initializing PCA9685 Drivers...");
+  pwm1.begin();
+  pwm2.begin();
+  
+  pwm1.setPWMFreq(SERVO_FREQ);
+  pwm2.setPWMFreq(SERVO_FREQ);
+
+  delay(500); // Allow hardware voltages to stabilize
+
+  updateLegAvailability();
+  printLegAvailability();
+  
+  Serial.println("Moving Hexapod to Home Position safely...");
+  homeRobot();
+  printSerialHelp();
+  delay(1000); 
+}
+
+void loop() {
+  handleSerialCommands();
+}
+
+/**
+ * Converts an angle (0-180) to the PCA9685 PWM pulse duration (SERVOMIN-SERVOMAX)
+ */
+int angleToPulse(int angle) {
+  return map(angle, 0, 180, SERVOMIN, SERVOMAX);
+}
+
+/**
+ * Directly writes an angle to a specific joint and updates the tracking array
+ * @param leg - Leg number (1 to 6)
+ * @param joint - Joint number (1: Hip, 2: Femur, 3: Tibia)
+ * @param angle - Target angle (0 to 180)
+ */
+void setLegJoint(int leg, int joint, int angle) {
+  // Guard rails to prevent mechanical damage over-travel
+  angle = constrain(angle, 0, 180); 
+  
+  int pulse = angleToPulse(angle);
+  int baseChannel = 0;
+  
+  // Determine pin channel mapping on the board (4 channels per leg)
+  if (leg == 1 || leg == 4)      baseChannel = 0;
+  else if (leg == 2 || leg == 5) baseChannel = 4;
+  else if (leg == 3 || leg == 6) baseChannel = 8;
+  
+  int targetChannel = baseChannel + (joint - 1);
+
+  // Route command to the correct physical PCA9685 card
+  if (leg <= 3) {
+    pwm1.setPWM(targetChannel, 0, pulse);
+  } else {
+    pwm2.setPWM(targetChannel, 0, pulse);
+  }
+  
+  // Critical: Keep our software variable synced with physical state
+  currentAngles[leg][joint] = angle; 
+}
+
+/**
+ * Moves a single joint smoothly from its current position to a target position
+ * @param speedDelay - Delay in milliseconds between each 1-degree step (higher = slower)
+ */
+void slowMove(int leg, int joint, int targetAngle, int speedDelay) {
+  if (!isLegAvailable(leg)) {
+    Serial.print("Skipping move. Leg ");
+    Serial.print(leg);
+    Serial.println(" is not connected.");
+    return;
+  }
+
+  int startAngle = currentAngles[leg][joint];
+  
+  if (startAngle < targetAngle) {
+    for (int a = startAngle; a <= targetAngle; a++) {
+      setLegJoint(leg, joint, a);
+      delay(speedDelay);
+    }
+  } else {
+    for (int a = startAngle; a >= targetAngle; a--) {
+      setLegJoint(leg, joint, a);
+      delay(speedDelay);
+    }
+  }
+}
+
+void setupLegDetectPins() {
+  analogReadResolution(12);
+
+  for (int leg = 1; leg <= 6; leg++) {
+    pinMode(legDetectPins[leg], INPUT);
+    analogSetPinAttenuation(legDetectPins[leg], ADC_11db);
+  }
+}
+
+void updateLegAvailability() {
+  for (int leg = 1; leg <= 6; leg++) {
+    int detectVoltage = analogReadMilliVolts(legDetectPins[leg]);
+    legAvailable[leg] = (detectVoltage >= LEG_DETECT_THRESHOLD_MV);
+  }
+}
+
+void printLegAvailability() {
+  Serial.println("Checking removable leg connections...");
+
+  for (int leg = 1; leg <= 6; leg++) {
+    printSingleLegAvailability(leg);
+  }
+}
+
+void printSingleLegAvailability(int leg) {
+  if (leg < 1 || leg > 6) {
+    Serial.println("Enter a leg number from 1 to 6.");
+    return;
+  }
+
+  Serial.print("Leg ");
+  Serial.print(leg);
+  Serial.print(" detect pin D");
+  Serial.print(legDetectPins[leg]);
+  Serial.print(": ");
+  Serial.print(analogReadMilliVolts(legDetectPins[leg]));
+  Serial.print(" mV -> ");
+  Serial.println(legAvailable[leg] ? "AVAILABLE" : "NOT CONNECTED");
+}
+
+bool isLegAvailable(int leg) {
+  if (leg < 1 || leg > 6) {
+    return false;
+  }
+
+  return legAvailable[leg];
+}
+
+void liftLeg(int leg) {
+  if (leg < 1 || leg > 6) {
+    Serial.println("Enter a leg number from 1 to 6.");
+    return;
+  }
+
+  updateLegAvailability();
+  printSingleLegAvailability(leg);
+
+  if (!isLegAvailable(leg)) {
+    Serial.print("Cannot lift Leg ");
+    Serial.print(leg);
+    Serial.println(" because it is not connected.");
+    return;
+  }
+
+  Serial.print("Lifting Leg ");
+  Serial.println(leg);
+  slowMove(leg, 2, LIFT_FEMUR, MOVE_SPEED_DELAY);
+  slowMove(leg, 3, LIFT_TIBIA, MOVE_SPEED_DELAY);
+  Serial.println("Lift complete.");
+}
+
+/**
+ * Positions all 18 servos safely to their default stance configuration on power-up
+ */
+void homeRobot() {
+  updateLegAvailability();
+
+  for (int leg = 1; leg <= 6; leg++) {
+    if (!isLegAvailable(leg)) {
+      Serial.print("Skipping Leg ");
+      Serial.print(leg);
+      Serial.println(" because it is not connected.");
+      continue;
+    }
+
+    Serial.print("Homing Leg "); Serial.println(leg);
+    
+    // Commands are sequentially sent with small pauses to prevent high current surges
+    setLegJoint(leg, 1, HOME_HIP);  // Hip
+    delay(40);
+    setLegJoint(leg, 2, HOME_FEMUR); // Femur
+    delay(40);
+    setLegJoint(leg, 3, HOME_TIBIA); // Tibia
+    delay(40);
+  }
+  Serial.println("All 18 servos successfully mapped, tracked, and homed!");
+}
+
+void printSerialHelp() {
+  Serial.println();
+  Serial.println("Serial commands:");
+  Serial.println("  1-6 = lift that connected leg");
+  Serial.println("  h   = return all connected legs to initial position");
+  Serial.println("  ?   = print this help");
+  Serial.println();
+}
+
+void handleSerialCommands() {
+  if (!Serial.available()) {
+    return;
+  }
+
+  String input = Serial.readStringUntil('\n');
+  input.trim();
+  input.toLowerCase();
+
+  if (input.length() == 0) {
+    return;
+  }
+
+  if (input == "h") {
+    Serial.println("Returning connected legs to initial position...");
+    homeRobot();
+    return;
+  }
+
+  if (input == "?") {
+    printSerialHelp();
+    return;
+  }
+
+  if (input.length() == 1 && input.charAt(0) >= '1' && input.charAt(0) <= '6') {
+    liftLeg(input.charAt(0) - '0');
+    return;
+  }
+
+  Serial.println("Unknown command. Enter 1-6 to li5ft a leg, h to home, or ? for help.");
+}
