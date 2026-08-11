@@ -25,6 +25,9 @@ I started by thinking about the robot as a modular system instead of a fixed six
 
 The mechanical design was done in Fusion 360. I designed custom joints for the leg mechanism and custom connectors so each leg could be attached or removed from the body. This helped make the robot easier to repair and also made the adaptive gait idea possible, because the robot could physically operate with different leg combinations.
 
+On the electronics and firmware side, I first focused on the basics: mapping every servo motor, finding the initial position of each joint, testing safe lift positions, and making sure no servo was moved accidentally. After that, I added leg availability detection, serial/Bluetooth control, and adaptive walking logic.
+
+
 ### Full 3D Mechanical Model
 
 <p align="center">
@@ -37,8 +40,6 @@ The mechanical design was done in Fusion 360. I designed custom joints for the l
   <img src="Robot%20files/Designed%20joint.jpeg" alt="Custom designed hexapod leg joint" width="46%">
   <img src="Robot%20files/assembled%20robot%20leg.jpeg" alt="Assembled modular robot leg" width="46%">
 </p>
-
-On the electronics and firmware side, I first focused on the basics: mapping every servo motor, finding the initial position of each joint, testing safe lift positions, and making sure no servo was moved accidentally. After that, I added leg availability detection, serial/Bluetooth control, and adaptive walking logic.
 
 ## What We Built
 
