@@ -4,6 +4,10 @@ This is my hexapod robot project for LiDAR-based terrain mapping. The main idea 
 
 Most small walking robots assume all legs are always attached and working. I wanted to design something different: a modular hexapod where each leg can be removed, replaced, detected by the controller, and handled in software. If one, two, or even three legs are damaged, the robot should still try to balance itself and generate a new gait pattern using the remaining legs.
 
+<p align="center">
+  <img src="Robot%20files/Robot%20redered%20img.jpeg" alt="Rendered adaptive modular hexapod robot" width="760">
+</p>
+
 This repository contains the ESP32 firmware for that idea. The mechanical side was designed separately as a full 3D model in Fusion 360, including custom leg joints and custom removable connectors.
 
 ## The Original Goal
@@ -21,6 +25,19 @@ I started by thinking about the robot as a modular system instead of a fixed six
 
 The mechanical design was done in Fusion 360. I designed custom joints for the leg mechanism and custom connectors so each leg could be attached or removed from the body. This helped make the robot easier to repair and also made the adaptive gait idea possible, because the robot could physically operate with different leg combinations.
 
+### Full 3D Mechanical Model
+
+<p align="center">
+  <img src="Robot%20files/robot%203D%20model%20ss%20fusion.jpeg" alt="Hexapod 3D model in Fusion 360" width="760">
+</p>
+
+### Custom Joint and Modular Leg Assembly
+
+<p align="center">
+  <img src="Robot%20files/Designed%20joint.jpeg" alt="Custom designed hexapod leg joint" width="46%">
+  <img src="Robot%20files/assembled%20robot%20leg.jpeg" alt="Assembled modular robot leg" width="46%">
+</p>
+
 On the electronics and firmware side, I first focused on the basics: mapping every servo motor, finding the initial position of each joint, testing safe lift positions, and making sure no servo was moved accidentally. After that, I added leg availability detection, serial/Bluetooth control, and adaptive walking logic.
 
 ## What We Built
@@ -37,6 +54,13 @@ On the electronics and firmware side, I first focused on the basics: mapping eve
 - Manual leg lift command for testing each leg.
 - Forward walking logic that changes based on connected legs.
 - Left and right rotation commands using available legs.
+
+### Physical Robot Base
+
+<p align="center">
+  <img src="Robot%20files/robot%20base.jpeg" alt="Hexapod robot base assembly" width="46%">
+  <img src="Robot%20files/robot%20base1.jpeg" alt="Hexapod robot base from another view" width="46%">
+</p>
 
 ## Problems Encountered And How We Solved Them
 
@@ -177,6 +201,12 @@ Software:
 - Adafruit PWM Servo Driver library
 - BluetoothSerial
 
+### Robot Electronics / PCB
+
+<p align="center">
+  <img src="Robot%20files/robot%20PCB.jpeg" alt="Hexapod robot electronics and PCB" width="720">
+</p>
+
 ## Servo Mapping
 
 | Leg | PCA9685 Address | Hip | Femur | Tibia |
@@ -226,6 +256,12 @@ GPIO 34 and GPIO 35 are input-only pins, which is fine because they are only use
 ## Results So Far
 
 The robot firmware can now detect connected and disconnected legs, print the availability status, skip removed legs, lift individual legs for testing, return to the home position, and select a walking strategy based on the remaining legs.
+
+### Robot in Motion
+
+<p align="center">
+  <img src="Robot%20files/Robot%20video.gif" alt="Adaptive modular hexapod robot motion demonstration" width="760">
+</p>
 
 The latest firmware build was successful:
 
